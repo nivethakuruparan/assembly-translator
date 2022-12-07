@@ -11,6 +11,8 @@ class TopLevelProgram(ast.NodeVisitor):
         self.__record_instruction('NOP1', label=entry_point)
         self.__should_save = True
         self.__current_variable = None
+        self.__in_iteration = False
+        self.__visited_global_variables = set()
         self.__elem_id = 0
 
     def finalize(self):
@@ -33,7 +35,14 @@ class TopLevelProgram(ast.NodeVisitor):
         self.__current_variable = None
 
     def visit_Constant(self, node):
-        self.__record_instruction(f'LDWA {node.value},i')
+        if self.__in_iteration: # if the variable is in a iteration, LDWA and STWA needed
+            self.__record_instruction(f'LDWA {node.value},i')
+            self.__visited_global_variables.add(self.__current_variable)
+        elif self.__current_variable in self.__visited_global_variables: # if modifying value of variable, LDWA and STWA needed
+            self.__record_instruction(f'LDWA {node.value},i')
+        else: 
+            self.__should_save = False
+            self.__visited_global_variables.add(self.__current_variable)
     
     def visit_Name(self, node):
         self.__record_instruction(f'LDWA {node.id},d')
@@ -68,6 +77,8 @@ class TopLevelProgram(ast.NodeVisitor):
 
     def visit_While(self, node):
         loop_id = self.__identify()
+        # entering iteration
+        self.__in_iteration = True
         inverted = {
             ast.Lt:  'BRGE', # '<'  in the code means we branch if '>=' 
             ast.LtE: 'BRGT', # '<=' in the code means we branch if '>' 
@@ -86,6 +97,8 @@ class TopLevelProgram(ast.NodeVisitor):
         self.__record_instruction(f'BR test_{loop_id}')
         # Sentinel marker for the end of the loop
         self.__record_instruction(f'NOP1', label = f'end_l_{loop_id}')
+        # exiting iteration
+        self.__in_iteration = False
 
     ####
     ## Not handling function calls 
@@ -105,6 +118,8 @@ class TopLevelProgram(ast.NodeVisitor):
     def __access_memory(self, node, instruction, label = None):
         if isinstance(node, ast.Constant):
             self.__record_instruction(f'{instruction} {node.value},i', label)
+        elif isinstance(node, ast.Name) and self.__identify_constant(node.id): # EQUATE
+            self.__record_instruction(f'{instruction} {node.id},i', label)
         else:
             self.__record_instruction(f'{instruction} {node.id},d', label)
 
@@ -112,3 +127,8 @@ class TopLevelProgram(ast.NodeVisitor):
         result = self.__elem_id
         self.__elem_id = self.__elem_id + 1
         return result
+
+    def __identify_constant(self, name):
+        if name.isupper() and name[0] == '_':
+            return True
+        return False
