@@ -84,6 +84,8 @@ class TopLevelProgram(ast.NodeVisitor):
             ast.LtE: 'BRGT', # '<=' in the code means we branch if '>' 
             ast.Gt:  'BRLE', # '>'  in the code means we branch if '<='
             ast.GtE: 'BRLT', # '>=' in the code means we branch if '<'
+            ast.NotEq: 'BREQ', # '!=' in the code means we branch if '=='
+            ast.Eq: 'BRNE' # '==' in the code means we branch if '!='
         }
         # left part can only be a variable
         self.__access_memory(node.test.left, 'LDWA', label = f'test_{loop_id}')
@@ -99,6 +101,38 @@ class TopLevelProgram(ast.NodeVisitor):
         self.__record_instruction(f'NOP1', label = f'end_l_{loop_id}')
         # exiting iteration
         self.__in_iteration = False
+
+    def visit_If(self, node):
+        loop_id = self.__identify()
+        inverted = {
+            ast.Lt:  'BRGE', # '<'  in the code means we branch if '>=' 
+            ast.LtE: 'BRGT', # '<=' in the code means we branch if '>' 
+            ast.Gt:  'BRLE', # '>'  in the code means we branch if '<='
+            ast.GtE: 'BRLT', # '>=' in the code means we branch if '<'
+            ast.NotEq: 'BREQ', # '!=' in the code means we branch if '=='
+            ast.Eq: 'BRNE' # '==' in the code means we branch if '!='
+        }
+
+        self.__access_memory(node.test.left, 'LDWA', label = f'if_{loop_id}') # LDWA
+        self.__access_memory(node.test.comparators[0], 'CPWA') # CPWA
+
+        if not node.orelse:
+            self.__record_instruction(f'{inverted[type(node.test.ops[0])]} end_f_{loop_id}') # BRANCH to end if condition not met
+        else:
+            self.__record_instruction(f'{inverted[type(node.test.ops[0])]} else_f_{loop_id}') # BRANCH to else if condition not met
+            
+        for contents in node.body: # print content of if statement
+            self.visit(contents)
+
+        self.__record_instruction(f'BR end_f_{loop_id}') # statement done, BRANCH to end
+        
+        if node.orelse: # print content of else statement 
+            self.__record_instruction(f'NOP1', label = f'else_f_{loop_id}') # end statement
+            for contents in node.orelse:
+                self.visit(contents)
+            self.__record_instruction(f'BR end_f_{loop_id}') # statement done, BRANCH to end
+        
+        self.__record_instruction(f'NOP1', label = f'end_f_{loop_id}') # end statement
 
     ####
     ## Not handling function calls 
