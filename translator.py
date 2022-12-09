@@ -1,7 +1,7 @@
 import argparse
 import ast
 from visitors.GlobalVariables import GlobalVariableExtraction
-from visitors.LocalVariable import LocalVariableExtraction
+from visitors.LocalVariables import LocalVariableExtraction
 from visitors.TopLevelProgram import TopLevelProgram
 from visitors.FunctionDefinition import FunctionDefinitionVisitor
 from generators.StaticMemoryAllocation import StaticMemoryAllocation

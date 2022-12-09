@@ -116,7 +116,7 @@ class FunctionBodyVisitor(ast.NodeVisitor):
                 # We are only supporting integers for now
                 self.__record_instruction(f'DECO {node.args[0].id},d')
             case _:
-                raise ValueError(f'Unsupported function call: { node.func.id}')
+                pass
 
     def visit_While(self, node):
         loop_id = self.__identify()

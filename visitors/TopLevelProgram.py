@@ -70,19 +70,24 @@ class TopLevelProgram(ast.NodeVisitor):
                 # We are only supporting integers for now
                 self.__record_instruction(f'DECO {node.args[0].id},d')
             case _:
-                # allocate local variables to stack
-                local_stack_count = 0
-                param_vars = []
+                # check cases of functions
+                # 1) the function either has a return value
+                # 2) the function either has parameters
+
+                has_params = False
+                has_return = False
+                param_variables = 0
+                return_variables = 0
 
                 for n, v in self.__local_var.items():
-                    if v[1] == 'p':
-                        local_stack_count += 2
-                        param_vars.append([n, v[0]])
-                    elif v[1] == 'r':
-                        local_stack_count += 2
+                    if v[2] == node.func.id and v[1] == 'p':
+                        param_variables += 1
+                        has_params = True 
+                    elif v[2] == node.func.id and v[1] == 'r':
+                        has_return = True 
+                        return_variables += 1                   
                 
-                if local_stack_count > 0:
-                    self.__record_instruction(f'SUBSP {local_stack_count},i')                     
+                self.assign_function( node, has_params, has_return, param_variables, return_variables)
                     
     ####
     ## Handling While loops (only variable OP variable)
@@ -180,3 +185,20 @@ class TopLevelProgram(ast.NodeVisitor):
             return True
         return False
 
+    def assign_function(self, node, has_params, has_returns, num_params, num_returns):
+        if has_params:
+            self.__record_instruction(f'SUBSP {(num_params * 2) + (num_returns * 2)},i')
+            stack_pointer = 0
+            for i in range(len(node.args)):
+                self.__record_instruction(f'LDWA {node.args[i].id},d')
+                self.__record_instruction(f'STWA {stack_pointer},s')
+                stack_pointer += 2
+          
+        self.__record_instruction(f'CALL {node.func.id}')
+
+        if has_returns:
+            self.__record_instruction(f'ADDSP {(num_params * 2)},i')
+            self.__record_instruction(f'LDWA {(num_returns * 2) - 2},s')
+            self.__record_instruction(f'STWA {node.args[0].id},d')
+            self.__record_instruction(f'ADDSP {(num_returns * 2)},i')
+            self.__should_save = False
