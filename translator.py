@@ -1,8 +1,11 @@
 import argparse
 import ast
 from visitors.GlobalVariables import GlobalVariableExtraction
+from visitors.LocalVariables import LocalVariableExtraction
 from visitors.TopLevelProgram import TopLevelProgram
+from visitors.FunctionDefinition import FunctionDefinitionVisitor
 from generators.StaticMemoryAllocation import StaticMemoryAllocation
+from generators.StackMemoryAllocation import StackMemoryAllocation
 from generators.EntryPoint import EntryPoint
 
 def main():
@@ -25,13 +28,26 @@ def process_cli():
 
 def process(input_file, root_node):
     print(f'; Translating {input_file}')
-    extractor = GlobalVariableExtraction()
-    extractor.visit(root_node)
-    memory_alloc = StaticMemoryAllocation(extractor.results)
+    global_extractor = GlobalVariableExtraction()
+    global_extractor.visit(root_node)
+    memory_alloc = StaticMemoryAllocation(global_extractor.results)
+
+    local_extractor = LocalVariableExtraction()
+    local_extractor.visit(root_node)
+    stack_alloc = StackMemoryAllocation(local_extractor.results)
+
     print('; Branching to top level (tl) instructions')
     print('\t\tBR tl')
     memory_alloc.generate()
-    top_level = TopLevelProgram('tl')
+
+    if local_extractor.results:
+        stack_alloc.generate()
+        function_def = FunctionDefinitionVisitor(local_extractor.results)
+        function_def.visit(root_node)
+        epfd = EntryPoint(function_def.finalize())
+        epfd.generate(True) 
+        
+    top_level = TopLevelProgram('tl', local_extractor.results)
     top_level.visit(root_node)
     ep = EntryPoint(top_level.finalize())
     ep.generate() 
