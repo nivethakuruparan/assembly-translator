@@ -166,3 +166,4 @@ class TopLevelProgram(ast.NodeVisitor):
         if name.isupper() and name[0] == '_':
             return True
         return False
+        
