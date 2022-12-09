@@ -5,7 +5,7 @@ class StaticMemoryAllocation():
         self.__global_vars = global_vars
 
     def generate(self):
-        print('; Allocating Global (static) memory')
+        print('; Allocating global memory')
         for n, v in self.__global_vars.items():
             if v is None:
                 print(f'{str(n+":"):<9}\t.BLOCK 2') # reserving memory for unknown value
@@ -13,3 +13,4 @@ class StaticMemoryAllocation():
                 print(f'{str(n+":"):<9}\t.EQUATE ' + str(v)) # reserving memory for constant variable
             elif v is not None:
                 print(f'{str(n+":"):<9}\t.WORD ' + str(v)) # reserving memory for known value
+            

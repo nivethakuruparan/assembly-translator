@@ -2,27 +2,59 @@ import ast
 
 LabeledInstruction = tuple[str, str]
 
-class TopLevelProgram(ast.NodeVisitor):
-    """We supports assignments and input/print calls"""
-    
-    def __init__(self, entry_point, local_vars) -> None:
+class FunctionDefinitionVisitor(ast.NodeVisitor):    
+
+    def __init__(self, local_vars: dict()) -> None:
         super().__init__()
-        self.__instructions = list()
-        self.__record_instruction('NOP1', label=entry_point)
-        self.__should_save = True
-        self.__current_variable = None
-        self.__in_iteration = False
-        self.__visited_global_variables = set()
-        self.__elem_id = 0
-        self.__local_var = local_vars
+        self.__function_instructions = list()
+        self.local_vars = local_vars
+
+    def visit_FunctionDef(self, node):
+        visit_function_body = FunctionBodyVisitor(self.local_vars, node.name)
+        visit_function_body.visit(node)
+        self.__function_instructions += visit_function_body.finalize()
 
     def finalize(self):
-        self.__instructions.append((None, '.END'))
-        return self.__instructions
+        return self.__function_instructions
 
-    ####
-    ## Handling Assignments (variable = ...)
-    ####
+
+class FunctionBodyVisitor(ast.NodeVisitor):
+
+    def __init__(self, local_vars: dict(), function_name) -> None:
+        super().__init__()
+        self.__local_vars = local_vars
+        self.__instructions = list()
+        self.__record_instruction('NOP1', label=function_name)
+        self.initialize()
+        self.__return_id = 0
+
+        self.__should_save = True
+        self.__current_variable = None
+        self.__visited_global_variables = set()
+        self.__elem_id = 0
+
+    def initialize(self):
+        # allocate local variables to stack
+        local_stack_count = 0
+        for n, v in self.__local_vars.items():
+            if v[1] == 'l':
+                local_stack_count += 2
+        
+        if local_stack_count > 0:
+            self.__record_instruction(f'SUBSP {local_stack_count},i')
+
+    def finalize(self):
+        # deallocate local variables to stack
+        local_stack_count = 0
+        for n, v in self.__local_vars.items():
+            if v[1] == 'l':
+                local_stack_count += 2
+        
+        if local_stack_count > 0:
+            self.__record_instruction(f'ADDSP {local_stack_count},i')
+        
+        self.__instructions.append((None, 'RET'))
+        return self.__instructions
 
     def visit_Assign(self, node):
         # remembering the name of the target
@@ -30,23 +62,24 @@ class TopLevelProgram(ast.NodeVisitor):
         # visiting the left part, now knowing where to store the result
         self.visit(node.value)
         if self.__should_save:
-            self.__record_instruction(f'STWA {self.__current_variable},d')
+            is_local = self.check_local(self.__current_variable)
+            if is_local[1]:
+                self.__record_instruction(f'LDWA {is_local[0]},s')
+            else:
+                self.__record_instruction(f'LDWA {is_local[0]},d')
         else:
             self.__should_save = True
         self.__current_variable = None
 
     def visit_Constant(self, node):
-        if self.__in_iteration: # if the variable is in a iteration, LDWA and STWA needed
-            self.__record_instruction(f'LDWA {node.value},i')
-            self.__visited_global_variables.add(self.__current_variable)
-        elif self.__current_variable in self.__visited_global_variables: # if modifying value of variable, LDWA and STWA needed
-            self.__record_instruction(f'LDWA {node.value},i')
-        else: 
-            self.__should_save = False
-            self.__visited_global_variables.add(self.__current_variable)
-    
+        self.__record_instruction(f'LDWA {node.value},i')
+            
     def visit_Name(self, node):
-        self.__record_instruction(f'LDWA {node.id},d')
+        is_local = self.check_local(node.id)
+        if is_local[1]:
+            self.__record_instruction(f'LDWA {is_local[0]},s')
+        else:
+            self.__record_instruction(f'LDWA {is_local[0]},d')
 
     def visit_BinOp(self, node):
         self.__access_memory(node.left, 'LDWA')
@@ -56,6 +89,19 @@ class TopLevelProgram(ast.NodeVisitor):
             self.__access_memory(node.right, 'SUBA')
         else:
             raise ValueError(f'Unsupported binary operator: {node.op}')
+
+    def visit_Return(self, node):
+        if not isinstance(node.value, ast.Constant):
+            is_local = self.check_local(node.value.id)
+            if is_local[1]:
+                self.__record_instruction(f'LDWA {is_local[0]},s')
+            else:
+                self.__record_instruction(f'LDWA {is_local[0]},d')
+        else:
+            self.__record_instruction(f'LDWA {node.value.value},d')
+
+        self.__record_instruction(f'STWA RetVal{self.__return_id},s')
+        self.__return_id += 1
 
     def visit_Call(self, node):
         match node.func.id:
@@ -70,28 +116,10 @@ class TopLevelProgram(ast.NodeVisitor):
                 # We are only supporting integers for now
                 self.__record_instruction(f'DECO {node.args[0].id},d')
             case _:
-                # allocate local variables to stack
-                local_stack_count = 0
-                param_vars = []
-
-                for n, v in self.__local_var.items():
-                    if v[1] == 'p':
-                        local_stack_count += 2
-                        param_vars.append([n, v[0]])
-                    elif v[1] == 'r':
-                        local_stack_count += 2
-                
-                if local_stack_count > 0:
-                    self.__record_instruction(f'SUBSP {local_stack_count},i')                     
-                    
-    ####
-    ## Handling While loops (only variable OP variable)
-    ####
+                raise ValueError(f'Unsupported function call: { node.func.id}')
 
     def visit_While(self, node):
         loop_id = self.__identify()
-        # entering iteration
-        self.__in_iteration = True
         inverted = {
             ast.Lt:  'BRGE', # '<'  in the code means we branch if '>=' 
             ast.LtE: 'BRGT', # '<=' in the code means we branch if '>' 
@@ -112,8 +140,6 @@ class TopLevelProgram(ast.NodeVisitor):
         self.__record_instruction(f'BR test_{loop_id}')
         # Sentinel marker for the end of the loop
         self.__record_instruction(f'NOP1', label = f'end_l_{loop_id}')
-        # exiting iteration
-        self.__in_iteration = False
 
     def visit_If(self, node):
         loop_id = self.__identify()
@@ -147,20 +173,14 @@ class TopLevelProgram(ast.NodeVisitor):
         
         self.__record_instruction(f'NOP1', label = f'end_f_{loop_id}') # end statement
 
-    ####
-    ## Not handling function calls 
-    ####
-
-    def visit_FunctionDef(self, node):
-        """We do not visit function definitions, they are not top level"""
-        pass
-
-    ####
-    ## Helper functions to 
-    ####
-
     def __record_instruction(self, instruction, label = None):
         self.__instructions.append((label, instruction))
+
+    def check_local(self, name):
+        if 'm' + name in self.__local_vars:
+            return ('m' + name, True)
+        else:
+            return (name, False)
 
     def __access_memory(self, node, instruction, label = None):
         if isinstance(node, ast.Constant):
@@ -168,7 +188,11 @@ class TopLevelProgram(ast.NodeVisitor):
         elif isinstance(node, ast.Name) and self.__identify_constant(node.id): # EQUATE
             self.__record_instruction(f'{instruction} {node.id},i', label)
         else:
-            self.__record_instruction(f'{instruction} {node.id},d', label)
+            is_local = self.check_local(node.id)
+            if is_local[1]:
+                self.__record_instruction(f'LDWA {is_local[0]},s')
+            else:
+                self.__record_instruction(f'LDWA {is_local[0]},d')
 
     def __identify(self):
         result = self.__elem_id
@@ -179,4 +203,3 @@ class TopLevelProgram(ast.NodeVisitor):
         if name.isupper() and name[0] == '_':
             return True
         return False
-
